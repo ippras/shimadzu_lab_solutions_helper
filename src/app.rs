@@ -1,19 +1,13 @@
-use eframe::egui::{self, DragValue, Label, RichText};
 use eframe::emath::Float;
-use egui_dnd::dnd;
-use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-// Глобальный счетчик для выдачи уникальных ID строкам
-static ID: AtomicU64 = AtomicU64::new(0);
 
 /// App
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct App {
-    rows: Vec<Row>,
     mode: AppMode,
-    text_content: String,
+    rows: Vec<Row>,
+    text: String,
+    dragged_point: Option<(usize, CurveType)>,
 }
 
 impl App {
@@ -43,23 +37,62 @@ impl eframe::App for App {
                 ui.heading("Генератор градиента насосов");
                 ui.separator();
 
-                let text = if self.mode == AppMode::Table {
-                    egui_phosphor::regular::TEXT_AA
-                } else {
-                    egui_phosphor::regular::TABLE
-                };
-                let hover_text = if self.mode == AppMode::Table {
-                    "Простмотр в режиме текста"
-                } else {
-                    "Простмотр в режиме таблицы"
-                };
+                let mut new_mode = self.mode;
+
                 if ui
-                    .button(RichText::new(text).heading())
-                    .on_hover_text(hover_text)
+                    .selectable_label(
+                        self.mode == AppMode::Table,
+                        egui::RichText::new(egui_phosphor::regular::TABLE).heading(),
+                    )
+                    .on_hover_text("Режим таблицы")
                     .clicked()
                 {
-                    self.toggle_mode();
+                    new_mode = AppMode::Table;
                 }
+
+                if ui
+                    .selectable_label(
+                        self.mode == AppMode::Text,
+                        egui::RichText::new(egui_phosphor::regular::TEXT_AA).heading(),
+                    )
+                    .on_hover_text("Режим текста")
+                    .clicked()
+                {
+                    new_mode = AppMode::Text;
+                }
+
+                if ui
+                    .selectable_label(
+                        self.mode == AppMode::Plot,
+                        egui::RichText::new(egui_phosphor::regular::CHART_LINE_UP).heading(),
+                    )
+                    .on_hover_text("Режим графика")
+                    .clicked()
+                {
+                    new_mode = AppMode::Plot;
+                }
+
+                if new_mode != self.mode {
+                    self.switch_mode(new_mode);
+                }
+
+                // let text = if self.mode == AppMode::Table {
+                //     egui_phosphor::regular::TEXT_AA
+                // } else {
+                //     egui_phosphor::regular::TABLE
+                // };
+                // let hover_text = if self.mode == AppMode::Table {
+                //     "Простмотр в режиме текста"
+                // } else {
+                //     "Простмотр в режиме таблицы"
+                // };
+                // if ui
+                //     .button(egui::RichText::new(text).heading())
+                //     .on_hover_text(hover_text)
+                //     .clicked()
+                // {
+                //     self.toggle_mode();
+                // }
             });
         });
 
@@ -67,8 +100,16 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| match self.mode {
             AppMode::Table => self.show_table(ui),
             AppMode::Text => self.show_text(ui),
+            AppMode::Plot => self.show_plot(ui),
         });
     }
+}
+
+#[derive(Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum CurveType {
+    PumpA,
+    PumpB,
+    Flow,
 }
 
 impl App {
@@ -103,19 +144,21 @@ impl App {
 
             ui.add_space(4.0);
 
+            let mut previous_time: Option<f64> = None;
             let mut row_to_delete = None;
 
-            dnd(ui, "dnd_example").show_vec(&mut self.rows, |ui, item, handle, _state| {
+            egui_dnd::dnd(ui, "dnd_example").show_vec(&mut self.rows, |ui, row, handle, _state| {
                 ui.horizontal(|ui| {
                     // Handle (кнопка для перетаскивания)
                     handle.ui(ui, |ui| {
                         ui.add_sized(
                             ui.spacing().interact_size,
-                            Label::new(egui_phosphor::regular::DOTS_SIX_VERTICAL),
-                        );
+                            egui::Label::new(egui_phosphor::regular::DOTS_SIX_VERTICAL),
+                        )
+                        .on_hover_text(row.id.to_string());
                     });
 
-                    // 6. Кнопка удаления
+                    // Кнопка удаления
                     if ui
                         .add_sized(
                             ui.spacing().interact_size,
@@ -123,55 +166,72 @@ impl App {
                         )
                         .clicked()
                     {
-                        row_to_delete = Some(item.id);
+                        row_to_delete = Some(row.id);
                     }
 
-                    // 1. Time
-                    ui.add_sized(
-                        size,
-                        DragValue::new(&mut item.time)
-                            .speed(0.1)
-                            .range(0.0..=1000.0),
-                    );
+                    // Time
+                    ui.scope(|ui| {
+                        if let Some(time) = previous_time.replace(row.time)
+                            && time > row.time
+                        {
+                            ui.visuals_mut().override_text_color =
+                                Some(ui.visuals().error_fg_color);
+                        }
+                        ui.add_sized(
+                            size,
+                            egui::DragValue::new(&mut row.time)
+                                .speed(0.1)
+                                .range(0.0..=1000.0),
+                        );
+                    });
 
-                    // 2. Pump A
-                    let mut a_temp = item.pump_a;
+                    // Pump A
+                    let mut a_temp = row.pump_a;
                     if ui
                         .add_sized(
                             size,
-                            DragValue::new(&mut a_temp).speed(0.1).range(0.0..=100.0),
+                            egui::DragValue::new(&mut a_temp)
+                                .speed(0.1)
+                                .range(0.0..=100.0),
                         )
                         .changed()
                     {
-                        item.pump_a = a_temp;
-                        item.pump_b = 100.0 - a_temp;
+                        row.pump_a = a_temp;
+                        row.pump_b = 100.0 - a_temp;
                     }
 
-                    // 3. Pump B
-                    let mut b_temp = item.pump_b;
+                    // Pump B
+                    let mut b_temp = row.pump_b;
                     if ui
                         .add_sized(
                             size,
-                            DragValue::new(&mut b_temp).speed(0.1).range(0.0..=100.0),
+                            egui::DragValue::new(&mut b_temp)
+                                .speed(0.1)
+                                .range(0.0..=100.0),
                         )
                         .changed()
                     {
-                        item.pump_b = b_temp;
-                        item.pump_a = 100.0 - b_temp;
+                        row.pump_b = b_temp;
+                        row.pump_a = 100.0 - b_temp;
                     }
 
-                    // 4. Total Flow
-                    ui.add_sized(
-                        size,
-                        DragValue::new(&mut item.flow)
-                            .speed(0.01)
-                            .range(0.0..=100.0),
-                    );
+                    // Total Flow
+                    ui.scope(|ui| {
+                        if row.flow.abs() < f64::EPSILON {
+                            ui.visuals_mut().override_text_color = Some(ui.visuals().warn_fg_color);
+                        }
+                        ui.add_sized(
+                            size,
+                            egui::DragValue::new(&mut row.flow)
+                                .speed(0.01)
+                                .range(0.0..=100.0),
+                        );
+                    });
 
                     // 5. Description
                     // ui.text_edit_singleline(&mut item.description);
                     ui.add(
-                        egui::TextEdit::singleline(&mut item.description)
+                        egui::TextEdit::singleline(&mut row.description)
                             .desired_width(f32::INFINITY),
                     );
                 });
@@ -208,7 +268,7 @@ impl App {
     fn show_text(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add(
-                egui::TextEdit::multiline(&mut self.text_content)
+                egui::TextEdit::multiline(&mut self.text)
                     .font(egui::TextStyle::Monospace)
                     .desired_width(f32::INFINITY)
                     .desired_rows(20),
@@ -216,99 +276,515 @@ impl App {
         });
     }
 
-    fn toggle_mode(&mut self) {
-        if self.mode == AppMode::Table {
-            // Переход: Таблица -> Текст
-            self.text_content.clear();
-            for row in &self.rows {
-                // Форматируем f64 в строку и меняем точку на запятую
-                let t = format!("{}", row.time).replace('.', ",");
-                let b = format!("{}", row.pump_b).replace('.', ",");
-                let f = format!("{}", row.flow).replace('.', ",");
-                let d = &row.description;
+    fn show_plot(&mut self, ui: &mut egui::Ui) {
+        // Создаем копию строк и сортируем по времени
+        let mut sorted_rows = self.rows.clone();
+        sorted_rows.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-                self.text_content
-                    .push_str(&format!("{}\tÍàñîñû\tPump B Conc.\t{}\t{}\n", t, b, d));
-                self.text_content
-                    .push_str(&format!("{}\tÍàñîñû\tTotal Flow\t{}\t\n", t, f));
-            }
-            self.mode = AppMode::Text;
-        } else {
-            // Переход: Текст -> Таблица (Парсинг)
-            let mut new_rows = Vec::new();
-            let mut temp_row: Option<Row> = None;
+        // Подготавливаем точки [x, y] для каждой кривой
+        let data_a: Vec<[f64; 2]> = sorted_rows
+            .iter()
+            .map(|row| [row.time, row.pump_a])
+            .collect();
+        let data_b: Vec<[f64; 2]> = sorted_rows
+            .iter()
+            .map(|row| [row.time, row.pump_b])
+            .collect();
+        let data_flow: Vec<[f64; 2]> = sorted_rows.iter().map(|row| [row.time, row.flow]).collect();
 
-            for (index, line) in self.text_content.lines().enumerate() {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() < 4 {
-                    // error!("index={index} line={line}");
-                    continue;
-                }
+        // Задаем цвета
+        let color_a = egui::Color32::from_rgb(200, 50, 50);
+        let color_b = egui::Color32::from_rgb(50, 150, 250);
+        let color_flow = egui::Color32::from_rgb(50, 200, 50);
 
-                let time_str = parts[0].trim();
-                let param = parts[2].trim();
-                let val_str = parts[3].trim();
-                let desc = if parts.len() > 4 {
-                    parts[4].trim().to_string()
-                } else {
-                    "".to_string()
-                };
+        // Создаем линии
+        let line_a = egui_plot::Line::new("Pump A (%)", data_a.clone())
+            .color(color_a)
+            .width(2.0);
+        let line_b = egui_plot::Line::new("Pump B (%)", data_b.clone())
+            .color(color_b)
+            .width(2.0);
+        let line_flow = egui_plot::Line::new("Total Flow", data_flow.clone())
+            .color(color_flow)
+            .width(2.0);
 
-                // Парсим строки обратно в f64 (меняя запятую на точку)
-                let time_val = time_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
-                let val_f64 = val_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
+        // Создаем точки поверх линий
+        let points_a = egui_plot::Points::new("Pump A (%)", data_a)
+            .color(color_a)
+            .radius(4.0);
+        let points_b = egui_plot::Points::new("Pump B (%)", data_b)
+            .color(color_b)
+            .radius(4.0);
+        let points_flow = egui_plot::Points::new("Total Flow", data_flow)
+            .color(color_flow)
+            .radius(4.0);
 
-                if param == "Pump B Conc." {
-                    let mut row = Row::default();
-                    row.time = time_val;
-                    row.pump_b = val_f64;
-                    row.pump_a = 100.0 - val_f64;
-                    row.description = desc;
-                    temp_row = Some(row);
-                } else if param == "Total Flow" {
-                    if let Some(mut row) = temp_row.take() {
-                        // Сравниваем f64 с учетом погрешности (epsilon)
-                        if (row.time - time_val).abs() < f64::EPSILON {
-                            row.flow = val_f64;
-                            new_rows.push(row);
-                        } else {
-                            // Если время не совпало, сохраняем старую и создаем новую
-                            new_rows.push(row);
-                            let mut new_row = Row::default();
-                            new_row.time = time_val;
-                            new_row.flow = val_f64;
-                            new_rows.push(new_row);
+        let rows_for_label = sorted_rows.clone();
+        // Отрисовываем сам график
+        let mut plot = egui_plot::Plot::new("gradient_plot")
+            .legend(egui_plot::Legend::default())
+            .x_axis_label("Time (min)")
+            .y_axis_label("Value")
+            .label_formatter(move |hover_pos| match hover_pos {
+                egui_plot::HoverPosition::NearDataPoint {
+                    plot_name,
+                    position,
+                    ..
+                } if !plot_name.is_empty() => {
+                    // Базовый текст подсказки
+                    let mut label = format!(
+                        "Time (min): {:.1}\n{plot_name}: {:.1}",
+                        position.x, position.y
+                    );
+
+                    // Ищем индекс текущей точки в нашем массиве по времени (X).
+                    // Используем небольшую погрешность (1e-5) для надежного сравнения f64.
+                    if let Some(idx) = rows_for_label
+                        .iter()
+                        .position(|r| (r.time - position.x).abs() < 1e-5)
+                    {
+                        // --- РАСЧЕТ НАКЛОНА СЛЕВА ---
+                        if idx > 0 {
+                            let prev = &rows_for_label[idx - 1];
+                            // Определяем Y предыдущей точки в зависимости от того, на какую линию навели
+                            let prev_y = match *plot_name {
+                                "Pump A (%)" => prev.pump_a,
+                                "Pump B (%)" => prev.pump_b,
+                                "Total Flow" => prev.flow,
+                                _ => position.y,
+                            };
+
+                            let dx = position.x - prev.time;
+                            if dx > 0.0 {
+                                let dy = position.y - prev_y;
+                                let slope_left = dy / dx;
+                                label.push_str(&format!("\nSlope left: {:.2}/min", slope_left));
+                            }
                         }
+
+                        // --- РАСЧЕТ НАКЛОНА СПРАВА ---
+                        if idx + 1 < rows_for_label.len() {
+                            let next = &rows_for_label[idx + 1];
+                            // Определяем Y следующей точки
+                            let next_y = match *plot_name {
+                                "Pump A (%)" => next.pump_a,
+                                "Pump B (%)" => next.pump_b,
+                                "Total Flow" => next.flow,
+                                _ => position.y,
+                            };
+
+                            let dx = next.time - position.x;
+                            if dx > 0.0 {
+                                let dy = next_y - position.y;
+                                let slope_right = dy / dx;
+                                label.push_str(&format!("\nSlope right: {:.2}/min", slope_right));
+                            }
+                        }
+                    }
+
+                    Some(label)
+                }
+                _ => None,
+            });
+
+        // Отключаем панорамирование графика, если мы в данный момент тянем точку
+        if self.dragged_point.is_some() {
+            plot = plot.allow_drag(false);
+        }
+
+        // Переменные для текущего кадра
+        let mut current_plot_pos = None;
+        let mut current_closest_idx = None;
+
+        // Отрисовываем график
+        let plot_response = plot.show(ui, |plot_ui| {
+            plot_ui.line(line_a);
+            plot_ui.points(points_a);
+            plot_ui.line(line_b);
+            plot_ui.points(points_b);
+            plot_ui.line(line_flow);
+            plot_ui.points(points_flow);
+
+            let response = plot_ui.response();
+            let interact_radius = 15.0;
+
+            // --- ОПРЕДЕЛЕНИЕ ТЕКУЩЕЙ ПОЗИЦИИ ---
+            // Вычисляем, над чем сейчас находится мышь
+            if let Some(pointer_pos) = response.hover_pos() {
+                let mut closest_dist = f32::MAX;
+                for (index, row) in self.rows.iter().enumerate() {
+                    let pos_a =
+                        plot_ui.screen_from_plot(egui_plot::PlotPoint::new(row.time, row.pump_a));
+                    let pos_b =
+                        plot_ui.screen_from_plot(egui_plot::PlotPoint::new(row.time, row.pump_b));
+                    let pos_flow =
+                        plot_ui.screen_from_plot(egui_plot::PlotPoint::new(row.time, row.flow));
+
+                    let min_dist = pos_a
+                        .distance(pointer_pos)
+                        .min(pos_b.distance(pointer_pos))
+                        .min(pos_flow.distance(pointer_pos));
+
+                    if min_dist < closest_dist && min_dist < interact_radius {
+                        closest_dist = min_dist;
+                        current_closest_idx = Some(index);
+                    }
+                }
+            }
+            if let Some(pos) = plot_ui.pointer_coordinate() {
+                current_plot_pos = Some([pos.x, pos.y]);
+            }
+
+            // --- А. НАЧАЛО ПЕРЕТАСКИВАНИЯ ---
+            if response.drag_started() {
+                if let Some(pointer_pos) = response.interact_pointer_pos() {
+                    let mut closest_dist = f32::MAX;
+                    let mut closest_point = None;
+
+                    for (index, row) in self.rows.iter().enumerate() {
+                        let pos_a = plot_ui
+                            .screen_from_plot(egui_plot::PlotPoint::new(row.time, row.pump_a));
+                        if pos_a.distance(pointer_pos) < closest_dist
+                            && pos_a.distance(pointer_pos) < interact_radius
+                        {
+                            closest_dist = pos_a.distance(pointer_pos);
+                            closest_point = Some((index, CurveType::PumpA));
+                        }
+
+                        let pos_b = plot_ui
+                            .screen_from_plot(egui_plot::PlotPoint::new(row.time, row.pump_b));
+                        if pos_b.distance(pointer_pos) < closest_dist
+                            && pos_b.distance(pointer_pos) < interact_radius
+                        {
+                            closest_dist = pos_b.distance(pointer_pos);
+                            closest_point = Some((index, CurveType::PumpB));
+                        }
+
+                        let pos_flow =
+                            plot_ui.screen_from_plot(egui_plot::PlotPoint::new(row.time, row.flow));
+                        if pos_flow.distance(pointer_pos) < closest_dist
+                            && pos_flow.distance(pointer_pos) < interact_radius
+                        {
+                            closest_dist = pos_flow.distance(pointer_pos);
+                            closest_point = Some((index, CurveType::Flow));
+                        }
+                    }
+                    self.dragged_point = closest_point;
+                }
+            }
+
+            // --- Б. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ ---
+            if response.dragged() {
+                if let Some((idx, curve_type)) = self.dragged_point {
+                    let delta = plot_ui.pointer_coordinate_drag_delta();
+                    if let Some(row) = self.rows.get_mut(idx) {
+                        row.time = (row.time + delta.x as f64).max(0.0);
+                        match curve_type {
+                            CurveType::PumpA => {
+                                row.pump_a = (row.pump_a + delta.y as f64).clamp(0.0, 100.0);
+                                row.pump_b = 100.0 - row.pump_a;
+                            }
+                            CurveType::PumpB => {
+                                row.pump_b = (row.pump_b + delta.y as f64).clamp(0.0, 100.0);
+                                row.pump_a = 100.0 - row.pump_b;
+                            }
+                            CurveType::Flow => row.flow = (row.flow + delta.y as f64).max(0.0),
+                        }
+                    }
+                }
+            }
+
+            // --- В. КОНЕЦ ПЕРЕТАСКИВАНИЯ ---
+            if response.drag_stopped() {
+                self.dragged_point = None;
+                self.rows.sort_by(|a, b| {
+                    a.time
+                        .partial_cmp(&b.time)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        });
+
+        // --- ФИКСАЦИЯ ЦЕЛИ ДЛЯ МЕНЮ ---
+        // Сохраняем данные ТОЛЬКО в тот момент, когда нажата правая кнопка мыши.
+        // Это гарантирует, что при движении мыши внутри меню цель не собьется.
+        if plot_response.response.hovered() && ui.input(|input| input.pointer.secondary_pressed()) {
+            ui.data_mut(|data| {
+                if let Some(pos) = current_plot_pos {
+                    data.insert_temp(egui::Id::new("plot_menu_pos"), pos);
+                }
+                data.insert_temp(egui::Id::new("plot_menu_idx"), current_closest_idx);
+            });
+        }
+
+        // --- КОНТЕКСТНОЕ МЕНЮ (ПРАВЫЙ КЛИК) ---
+        plot_response.response.context_menu(|ui| {
+            // Читаем "замороженные" данные
+            let saved_pos =
+                ui.data(|data| data.get_temp::<[f64; 2]>(egui::Id::new("plot_menu_pos")));
+            let saved_idx = ui
+                .data(|data| data.get_temp::<Option<usize>>(egui::Id::new("plot_menu_idx")))
+                .flatten();
+
+            if let Some(idx) = saved_idx {
+                if ui
+                    .button((egui_phosphor::regular::MINUS, "Удалить точку"))
+                    .clicked()
+                {
+                    if self.rows.len() > 2 {
+                        self.rows.remove(idx);
+                    }
+                    ui.close();
+                }
+            } else {
+                if ui
+                    .button((egui_phosphor::regular::PLUS, "Добавить точку"))
+                    .clicked()
+                {
+                    if let Some(pos) = saved_pos {
+                        let new_time = pos[0].max(0.0);
+
+                        if !self.rows.is_empty() {
+                            let mut new_row = self.rows[0].clone();
+                            new_row.time = new_time;
+
+                            let mut left = None;
+                            let mut right = None;
+
+                            for row in &self.rows {
+                                if row.time <= new_time {
+                                    left = Some(row);
+                                }
+                                if row.time >= new_time && right.is_none() {
+                                    right = Some(row);
+                                }
+                            }
+
+                            match (left, right) {
+                                (Some(l), Some(r)) if l.time != r.time => {
+                                    let t = (new_time - l.time) / (r.time - l.time);
+                                    new_row.pump_a = l.pump_a + (r.pump_a - l.pump_a) * t;
+                                    new_row.pump_b = l.pump_b + (r.pump_b - l.pump_b) * t;
+                                    new_row.flow = l.flow + (r.flow - l.flow) * t;
+                                }
+                                (Some(l), _) => {
+                                    new_row.pump_a = l.pump_a;
+                                    new_row.pump_b = l.pump_b;
+                                    new_row.flow = l.flow;
+                                }
+                                (_, Some(r)) => {
+                                    new_row.pump_a = r.pump_a;
+                                    new_row.pump_b = r.pump_b;
+                                    new_row.flow = r.flow;
+                                }
+                                _ => {}
+                            }
+
+                            self.rows.push(new_row);
+                            self.rows.sort_by(|a, b| {
+                                a.time
+                                    .partial_cmp(&b.time)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                        }
+                    }
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    fn switch_mode(&mut self, new_mode: AppMode) {
+        // Если мы уходим из текстового режима (в таблицу или график), парсим текст
+        if self.mode == AppMode::Text && new_mode != AppMode::Text {
+            self.parse_text();
+        }
+
+        // Если мы заходим в текстовый режим (из таблицы или графика), генерируем текст
+        if self.mode != AppMode::Text && new_mode == AppMode::Text {
+            self.generate_text();
+        }
+
+        self.mode = new_mode;
+    }
+
+    fn generate_text(&mut self) {
+        self.text.clear();
+        for row in &self.rows {
+            let t = format!("{}", row.time).replace('.', ",");
+            let b = format!("{}", row.pump_b).replace('.', ",");
+            let f = format!("{}", row.flow).replace('.', ",");
+            let d = &row.description;
+
+            self.text
+                .push_str(&format!("{}\tÍàñîñû\tPump B Conc.\t{}\t{}\n", t, b, d));
+            self.text
+                .push_str(&format!("{}\tÍàñîñû\tTotal Flow\t{}\t\n", t, f));
+        }
+    }
+
+    fn parse_text(&mut self) {
+        let mut new_rows = Vec::new();
+        let mut temp_row: Option<Row> = None;
+
+        for line in self.text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+
+            let time_str = parts[0].trim();
+            let param = parts[2].trim();
+            let val_str = parts[3].trim();
+            let desc = if parts.len() > 4 {
+                parts[4].trim().to_string()
+            } else {
+                "".to_string()
+            };
+
+            let time_val = time_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
+            let val_f64 = val_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
+
+            if param == "Pump B Conc." {
+                if let Some(pending_row) = temp_row.take() {
+                    new_rows.push(pending_row);
+                }
+                let mut row = Row::default();
+                row.time = time_val;
+                row.pump_b = val_f64;
+                row.pump_a = 100.0 - val_f64;
+                row.description = desc;
+                temp_row = Some(row);
+            } else if param == "Total Flow" {
+                if let Some(mut row) = temp_row.take() {
+                    if (row.time - time_val).abs() < f64::EPSILON {
+                        row.flow = val_f64;
+                        new_rows.push(row);
                     } else {
+                        new_rows.push(row);
                         let mut new_row = Row::default();
                         new_row.time = time_val;
                         new_row.flow = val_f64;
                         new_rows.push(new_row);
                     }
+                } else {
+                    let mut new_row = Row::default();
+                    new_row.time = time_val;
+                    new_row.flow = val_f64;
+                    new_rows.push(new_row);
                 }
             }
-            // Если осталась непарная строка Pump B
-            if let Some(row) = temp_row {
-                new_rows.push(row);
-            }
-
-            self.rows = new_rows;
-            // if self.rows.is_empty() {
-            //     self.rows.push(Row::default());
-            // }
-
-            self.mode = AppMode::Table;
         }
+        if let Some(row) = temp_row {
+            new_rows.push(row);
+        }
+        self.rows = new_rows;
     }
+
+    // fn toggle_mode(&mut self) {
+    //     if self.mode == AppMode::Table {
+    //         // Переход: Таблица -> Текст
+    //         self.text.clear();
+    //         for row in &self.rows {
+    //             // Форматируем f64 в строку и меняем точку на запятую
+    //             let t = format!("{}", row.time).replace('.', ",");
+    //             let b = format!("{}", row.pump_b).replace('.', ",");
+    //             let f = format!("{}", row.flow).replace('.', ",");
+    //             let d = &row.description;
+
+    //             self.text
+    //                 .push_str(&format!("{}\tÍàñîñû\tPump B Conc.\t{}\t{}\n", t, b, d));
+    //             self.text
+    //                 .push_str(&format!("{}\tÍàñîñû\tTotal Flow\t{}\t\n", t, f));
+    //         }
+    //         self.mode = AppMode::Text;
+    //     } else {
+    //         // Переход: Текст -> Таблица (Парсинг)
+    //         let mut new_rows = Vec::new();
+    //         let mut temp_row: Option<Row> = None;
+
+    //         for (index, line) in self.text.lines().enumerate() {
+    //             if line.trim().is_empty() {
+    //                 continue;
+    //             }
+    //             let parts: Vec<&str> = line.split('\t').collect();
+    //             if parts.len() < 4 {
+    //                 // error!("index={index} line={line}");
+    //                 continue;
+    //             }
+
+    //             let time_str = parts[0].trim();
+    //             let param = parts[2].trim();
+    //             let val_str = parts[3].trim();
+    //             let desc = if parts.len() > 4 {
+    //                 parts[4].trim().to_string()
+    //             } else {
+    //                 "".to_string()
+    //             };
+
+    //             // Парсим строки обратно в f64 (меняя запятую на точку)
+    //             let time_val = time_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
+    //             let val_f64 = val_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
+
+    //             if param == "Pump B Conc." {
+    //                 // Если в temp_row уже ждет строка (предыдущий Pump B), сохраняем её перед тем, как создать новую!
+    //                 if let Some(pending_row) = temp_row.take() {
+    //                     new_rows.push(pending_row);
+    //                 }
+    //                 let mut row = Row::default();
+    //                 row.time = time_val;
+    //                 row.pump_b = val_f64;
+    //                 row.pump_a = 100.0 - val_f64;
+    //                 row.description = desc;
+    //                 temp_row = Some(row);
+    //             } else if param == "Total Flow" {
+    //                 if let Some(mut row) = temp_row.take() {
+    //                     // Сравниваем f64 с учетом погрешности (epsilon)
+    //                     if (row.time - time_val).abs() < f64::EPSILON {
+    //                         row.flow = val_f64;
+    //                         new_rows.push(row);
+    //                     } else {
+    //                         // Если время не совпало, сохраняем старую и создаем новую
+    //                         new_rows.push(row);
+    //                         let mut new_row = Row::default();
+    //                         new_row.time = time_val;
+    //                         new_row.flow = val_f64;
+    //                         new_rows.push(new_row);
+    //                     }
+    //                 } else {
+    //                     let mut new_row = Row::default();
+    //                     new_row.time = time_val;
+    //                     new_row.flow = val_f64;
+    //                     new_rows.push(new_row);
+    //                 }
+    //             }
+    //         }
+    //         // Если осталась непарная строка Pump B
+    //         if let Some(row) = temp_row {
+    //             new_rows.push(row);
+    //         }
+
+    //         self.rows = new_rows;
+    //         // if self.rows.is_empty() {
+    //         //     self.rows.push(Row::default());
+    //         // }
+
+    //         self.mode = AppMode::Table;
+    //     }
+    // }
 }
 
 // Структура для хранения данных одной строки.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct Row {
-    id: u64,
+    id: uuid::Uuid,
     time: f64,
     pump_a: f64,
     pump_b: f64,
@@ -320,7 +796,7 @@ struct Row {
 impl Clone for Row {
     fn clone(&self) -> Self {
         Self {
-            id: ID.fetch_add(1, Ordering::Relaxed),
+            id: uuid::Uuid::new_v4(),
             time: self.time,
             pump_a: self.pump_a,
             pump_b: self.pump_b,
@@ -333,18 +809,18 @@ impl Clone for Row {
 impl Default for Row {
     fn default() -> Self {
         Self {
-            id: ID.fetch_add(1, Ordering::Relaxed),
+            id: uuid::Uuid::new_v4(),
             time: 0.0,
             pump_a: 0.0,   // По умолчанию насос А = 0%
             pump_b: 100.0, // По умолчанию насос B = 100%
-            flow: 1.0,     // Поток по умолчанию
+            flow: 0.0,     // Поток по умолчанию
             description: String::new(),
         }
     }
 }
 
-impl Hash for Row {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl std::hash::Hash for Row {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
@@ -355,4 +831,5 @@ enum AppMode {
     #[default]
     Table,
     Text,
+    Plot,
 }
