@@ -1043,6 +1043,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_plot"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "302515219c63e7f380058ecc899c5a6b2c5fe9f140ef1d91c3b685c9f0355fa3"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3021,15 +3032,17 @@ dependencies = [
 
 [[package]]
 name = "shimadzu_lab_solutions_helper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
  "egui-phosphor",
  "egui_dnd",
+ "egui_plot",
  "env_logger",
  "log",
  "serde",
+ "uuid",
  "wasm-bindgen-futures",
  "web-sys",
 ]
@@ -3509,6 +3522,7 @@ version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
