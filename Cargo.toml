@@ -29,3 +29,25 @@ opt-level = 2 # fast and small wasm
 # Optimize all dependencies even in debug builds:
 [profile.dev.package."*"]
 opt-level = 2
+
+[workspace.metadata.release]
+# Запускаем git-cliff перед релизным коммитом. 
+# {{version}} — это переменная, куда cargo-release подставит новую версию.
+pre-release-hook = [
+    "git",
+    "cliff",
+    "-o",
+    "CHANGELOG.md",
+    "--tag",
+    "{{version}}",
+]
+
+# Шаблон сообщения для релизного коммита (в стиле Conventional Commits)
+pre-release-commit-message = "chore(release): v{{version}}"
+
+# Шаблон имени тега
+tag-name = "v{{version}}"
+
+# Если вы НЕ планируете публиковать пакет на crates.io (например, это приватный бэкенд),
+# обязательно добавьте эту строку, чтобы cargo-release пропустил шаг публикации:
+publish = false
