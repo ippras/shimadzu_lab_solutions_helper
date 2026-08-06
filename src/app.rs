@@ -295,11 +295,7 @@ impl App {
     fn show_plot(&mut self, ui: &mut egui::Ui) {
         // Создаем копию строк и сортируем по времени
         let mut sorted_rows = self.rows.clone();
-        sorted_rows.sort_by(|a, b| {
-            a.time
-                .partial_cmp(&b.time)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        sorted_rows.sort_by_cached_key(|row| row.time.ord());
 
         // Подготавливаем точки [x, y] для каждой кривой
         let data_a: Vec<[f64; 2]> = sorted_rows
@@ -494,21 +490,75 @@ impl App {
             }
 
             // --- Б. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ ---
+            // if response.dragged() {
+            //     if let Some((idx, curve_type)) = self.dragged_point {
+            //         let delta = plot_ui.pointer_coordinate_drag_delta();
+            //         if let Some(row) = self.rows.get_mut(idx) {
+            //             row.time = (row.time + delta.x as f64).max(0.0);
+            //             match curve_type {
+            //                 CurveType::PumpA => {
+            //                     row.pump_a = (row.pump_a + delta.y as f64).clamp(0.0, 100.0);
+            //                     row.pump_b = 100.0 - row.pump_a;
+            //                 }
+            //                 CurveType::PumpB => {
+            //                     row.pump_b = (row.pump_b + delta.y as f64).clamp(0.0, 100.0);
+            //                     row.pump_a = 100.0 - row.pump_b;
+            //                 }
+            //                 CurveType::Flow => row.flow = (row.flow + delta.y as f64).max(0.0),
+            //             }
+            //         }
+            //     }
+            // }
+            // --- Б. ПРОЦЕСС ПЕРЕТАСКИВАНИЯ ---
             if response.dragged() {
                 if let Some((idx, curve_type)) = self.dragged_point {
-                    let delta = plot_ui.pointer_coordinate_drag_delta();
-                    if let Some(row) = self.rows.get_mut(idx) {
-                        row.time = (row.time + delta.x as f64).max(0.0);
-                        match curve_type {
-                            CurveType::PumpA => {
-                                row.pump_a = (row.pump_a + delta.y as f64).clamp(0.0, 100.0);
-                                row.pump_b = 100.0 - row.pump_a;
+                    if let Some(pointer_pos) = plot_ui.pointer_coordinate() {
+                        let mut target_x = pointer_pos.x;
+                        let mut target_y = pointer_pos.y;
+
+                        // Если НЕ зажат Shift, привязываем к точной визуальной сетке egui_plot
+                        if !plot_ui.ctx().input(|input| input.modifiers.shift) {
+                            // 8.0 - минимальное расстояние между тонкими линиями в пикселях
+                            const GRID_PIXEL_SPACING: f64 = 8.0;
+
+                            let rect = plot_ui.response().rect;
+                            let bounds = plot_ui.plot_bounds();
+
+                            // Функция, которая в точности повторяет логику next_power из log_grid_spacer
+                            let calc_exact_step = |bounds_range: f64, pixels: f64| -> f64 {
+                                if pixels <= 0.0 || bounds_range <= 0.0 {
+                                    return 1.0;
+                                }
+
+                                let base_step_size = bounds_range * (GRID_PIXEL_SPACING / pixels);
+
+                                // Округляем ВВЕРХ до ближайшей степени 10 (..., 0.1, 1.0, 10.0, ...)
+                                10.0_f64.powi(base_step_size.log10().ceil() as i32)
+                            };
+
+                            // Вычисляем точный шаг для осей X и Y
+                            let snap_x = calc_exact_step(bounds.width(), rect.width() as f64);
+                            let snap_y = calc_exact_step(bounds.height(), rect.height() as f64);
+
+                            // Округляем координаты до вычисленного шага сетки
+                            target_x = (target_x / snap_x).round() * snap_x;
+                            target_y = (target_y / snap_y).round() * snap_y;
+                        }
+
+                        if let Some(row) = self.rows.get_mut(idx) {
+                            row.time = target_x.max(0.0);
+
+                            match curve_type {
+                                CurveType::PumpA => {
+                                    row.pump_a = target_y.clamp(0.0, 100.0);
+                                    row.pump_b = 100.0 - row.pump_a;
+                                }
+                                CurveType::PumpB => {
+                                    row.pump_b = target_y.clamp(0.0, 100.0);
+                                    row.pump_a = 100.0 - row.pump_b;
+                                }
+                                CurveType::Flow => row.flow = target_y.max(0.0),
                             }
-                            CurveType::PumpB => {
-                                row.pump_b = (row.pump_b + delta.y as f64).clamp(0.0, 100.0);
-                                row.pump_a = 100.0 - row.pump_b;
-                            }
-                            CurveType::Flow => row.flow = (row.flow + delta.y as f64).max(0.0),
                         }
                     }
                 }
@@ -517,11 +567,7 @@ impl App {
             // --- В. КОНЕЦ ПЕРЕТАСКИВАНИЯ ---
             if response.drag_stopped() {
                 self.dragged_point = None;
-                self.rows.sort_by(|a, b| {
-                    a.time
-                        .partial_cmp(&b.time)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
+                self.rows.sort_by_cached_key(|row| row.time.ord());
             }
         });
 
@@ -703,98 +749,6 @@ impl App {
         }
         self.rows = new_rows;
     }
-
-    // fn toggle_mode(&mut self) {
-    //     if self.mode == AppMode::Table {
-    //         // Переход: Таблица -> Текст
-    //         self.text.clear();
-    //         for row in &self.rows {
-    //             // Форматируем f64 в строку и меняем точку на запятую
-    //             let t = format!("{}", row.time).replace('.', ",");
-    //             let b = format!("{}", row.pump_b).replace('.', ",");
-    //             let f = format!("{}", row.flow).replace('.', ",");
-    //             let d = &row.description;
-
-    //             self.text
-    //                 .push_str(&format!("{}\tÍàñîñû\tPump B Conc.\t{}\t{}\n", t, b, d));
-    //             self.text
-    //                 .push_str(&format!("{}\tÍàñîñû\tTotal Flow\t{}\t\n", t, f));
-    //         }
-    //         self.mode = AppMode::Text;
-    //     } else {
-    //         // Переход: Текст -> Таблица (Парсинг)
-    //         let mut new_rows = Vec::new();
-    //         let mut temp_row: Option<Row> = None;
-
-    //         for (index, line) in self.text.lines().enumerate() {
-    //             if line.trim().is_empty() {
-    //                 continue;
-    //             }
-    //             let parts: Vec<&str> = line.split('\t').collect();
-    //             if parts.len() < 4 {
-    //                 // error!("index={index} line={line}");
-    //                 continue;
-    //             }
-
-    //             let time_str = parts[0].trim();
-    //             let param = parts[2].trim();
-    //             let val_str = parts[3].trim();
-    //             let desc = if parts.len() > 4 {
-    //                 parts[4].trim().to_string()
-    //             } else {
-    //                 "".to_string()
-    //             };
-
-    //             // Парсим строки обратно в f64 (меняя запятую на точку)
-    //             let time_val = time_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
-    //             let val_f64 = val_str.replace(',', ".").parse::<f64>().unwrap_or(0.0);
-
-    //             if param == "Pump B Conc." {
-    //                 // Если в temp_row уже ждет строка (предыдущий Pump B), сохраняем её перед тем, как создать новую!
-    //                 if let Some(pending_row) = temp_row.take() {
-    //                     new_rows.push(pending_row);
-    //                 }
-    //                 let mut row = Row::default();
-    //                 row.time = time_val;
-    //                 row.pump_b = val_f64;
-    //                 row.pump_a = 100.0 - val_f64;
-    //                 row.description = desc;
-    //                 temp_row = Some(row);
-    //             } else if param == "Total Flow" {
-    //                 if let Some(mut row) = temp_row.take() {
-    //                     // Сравниваем f64 с учетом погрешности (epsilon)
-    //                     if (row.time - time_val).abs() < f64::EPSILON {
-    //                         row.flow = val_f64;
-    //                         new_rows.push(row);
-    //                     } else {
-    //                         // Если время не совпало, сохраняем старую и создаем новую
-    //                         new_rows.push(row);
-    //                         let mut new_row = Row::default();
-    //                         new_row.time = time_val;
-    //                         new_row.flow = val_f64;
-    //                         new_rows.push(new_row);
-    //                     }
-    //                 } else {
-    //                     let mut new_row = Row::default();
-    //                     new_row.time = time_val;
-    //                     new_row.flow = val_f64;
-    //                     new_rows.push(new_row);
-    //                 }
-    //             }
-    //         }
-    //         // Если осталась непарная строка Pump B
-    //         if let Some(row) = temp_row {
-    //             new_rows.push(row);
-    //         }
-
-    //         self.rows = new_rows;
-    //         // if self.rows.is_empty() {
-    //         //     self.rows.push(Row::default());
-    //         // }
-
-    //         self.mode = AppMode::Table;
-    //     }
-    // }
 }
 
 // Структура для хранения данных одной строки.
