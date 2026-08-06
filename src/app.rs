@@ -31,77 +31,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Верхняя панель с кнопками
-        egui::Panel::top("TopPanel").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Генератор градиента насосов");
-                ui.separator();
-
-                let mut new_mode = self.mode;
-
-                if ui
-                    .selectable_label(
-                        self.mode == AppMode::Table,
-                        egui::RichText::new(egui_phosphor::regular::TABLE).heading(),
-                    )
-                    .on_hover_text("Режим таблицы")
-                    .clicked()
-                {
-                    new_mode = AppMode::Table;
-                }
-
-                if ui
-                    .selectable_label(
-                        self.mode == AppMode::Text,
-                        egui::RichText::new(egui_phosphor::regular::TEXT_AA).heading(),
-                    )
-                    .on_hover_text("Режим текста")
-                    .clicked()
-                {
-                    new_mode = AppMode::Text;
-                }
-
-                if ui
-                    .selectable_label(
-                        self.mode == AppMode::Plot,
-                        egui::RichText::new(egui_phosphor::regular::CHART_LINE_UP).heading(),
-                    )
-                    .on_hover_text("Режим графика")
-                    .clicked()
-                {
-                    new_mode = AppMode::Plot;
-                }
-
-                if new_mode != self.mode {
-                    self.switch_mode(new_mode);
-                }
-
-                // let text = if self.mode == AppMode::Table {
-                //     egui_phosphor::regular::TEXT_AA
-                // } else {
-                //     egui_phosphor::regular::TABLE
-                // };
-                // let hover_text = if self.mode == AppMode::Table {
-                //     "Простмотр в режиме текста"
-                // } else {
-                //     "Простмотр в режиме таблицы"
-                // };
-                // if ui
-                //     .button(egui::RichText::new(text).heading())
-                //     .on_hover_text(hover_text)
-                //     .clicked()
-                // {
-                //     self.toggle_mode();
-                // }
-            });
-        });
-
-        // Центральная панель
-        egui::CentralPanel::default().show(ui, |ui| match self.mode {
-            AppMode::Table => self.show_table(ui),
-            AppMode::Text => self.show_text(ui),
-            AppMode::Plot => self.show_plot(ui),
-        });
+        self.panels(ui);
     }
 }
 
@@ -110,6 +40,92 @@ pub enum CurveType {
     PumpA,
     PumpB,
     Flow,
+}
+
+impl App {
+    fn panels(&mut self, ui: &mut egui::Ui) {
+        self.top_panel(ui);
+        self.bottom_panel(ui);
+        // self.left_panel(ui);
+        self.central_panel(ui);
+    }
+
+    // Bottom panel
+    fn bottom_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("BottomPanel").show(ui, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Sides::new().show(
+                    ui,
+                    |_| {},
+                    |ui| {
+                        egui::warn_if_debug_build(ui);
+                        ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).small());
+                        ui.separator();
+                    },
+                );
+            });
+        });
+    }
+
+    // Central panel
+    fn central_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default().show(ui, |ui| match self.mode {
+            AppMode::Table => self.show_table(ui),
+            AppMode::Text => self.show_text(ui),
+            AppMode::Plot => self.show_plot(ui),
+        });
+    }
+
+    // Top panel
+    fn top_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("TopPanel").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                egui::ScrollArea::horizontal().show(ui, |ui| {
+                    ui.heading("Генератор градиента насосов");
+                    ui.separator();
+
+                    let mut new_mode = self.mode;
+
+                    if ui
+                        .selectable_label(
+                            self.mode == AppMode::Table,
+                            egui::RichText::new(egui_phosphor::regular::TABLE).heading(),
+                        )
+                        .on_hover_text("Режим таблицы")
+                        .clicked()
+                    {
+                        new_mode = AppMode::Table;
+                    }
+
+                    if ui
+                        .selectable_label(
+                            self.mode == AppMode::Text,
+                            egui::RichText::new(egui_phosphor::regular::TEXT_AA).heading(),
+                        )
+                        .on_hover_text("Режим текста")
+                        .clicked()
+                    {
+                        new_mode = AppMode::Text;
+                    }
+
+                    if ui
+                        .selectable_label(
+                            self.mode == AppMode::Plot,
+                            egui::RichText::new(egui_phosphor::regular::CHART_LINE_UP).heading(),
+                        )
+                        .on_hover_text("Режим графика")
+                        .clicked()
+                    {
+                        new_mode = AppMode::Plot;
+                    }
+
+                    if new_mode != self.mode {
+                        self.switch_mode(new_mode);
+                    }
+                });
+            });
+        });
+    }
 }
 
 impl App {
